@@ -1,0 +1,65 @@
+body{
+    font-family: Arial;
+    background-color: #001f13;
+    color: #ffaf00;
+}
+
+body>h1{
+}
+
+.options{
+    display:flex;
+    gap:1em;
+    justify-content:center;
+}
+
+.button.diamond{
+    transition:all.2s;
+}
+
+.diamond.button.selected, .diamond.button:hover{
+    color: #ffe897;
+    background-color: #ffc7003b;
+}
+
+.diamond{
+    border: solid 1px;
+    padding: 0.5em;
+    border-radius: 0px 10px 0px 10px;
+    box-sizing: border-box;
+}
+
+.diamond.button.disabled{
+    color:#7c6300;
+    background-color: #ffc70000;
+}
+.diamond.button.disabled:hover{
+    color:#7c6300;
+    background-color: #ffc70000;
+}
+
+.itemButton{
+    max-width: 300px;
+    margin: 0 auto;
+    transition: all.2s;
+}
+
+.sbox{
+    display: flex;
+    flex-direction: column;
+    border-bottom: 1px solid;
+    padding: 1em;
+    gap: 1em;
+}
+
+.itemButton>.button{
+    text-decoration: underline;
+    color: #00ff1b;
+    text-align:right;
+}
+
+.itemButton:hover{
+    max-width: 400px;
+    padding-left: calc(0.5em + 40px);
+    padding-right: calc(0.5em + 40px);
+}

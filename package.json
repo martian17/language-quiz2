@@ -1,0 +1,23 @@
+{
+  "name": "quiz",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "./node_modules/.bin/esbuild ./src/main.js --bundle --outfile=./public/out.js --format=esm",
+    "serve": "http-server ./public",
+    "start": "onchange './src/*' -- npm run build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2",
+    "htmlgen": "github:martian17/htmlgen"
+  },
+  "devDependencies": {
+    "esbuild": "0.19.11",
+    "onchange": "^7.1.0"
+  }
+}
