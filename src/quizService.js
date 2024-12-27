@@ -162,8 +162,10 @@ const createOptions = function(word,words){
 
 export const createQuiz = async function(qid,ctx){
     // fetch necessary information
+    console.log(await get(`/quiz/${qid}/responses`));
     const words = (await get(`/quiz/${qid}`)).data;
     const resps = await get(`/quiz/${qid}/responses`);
+    console.log(words,resps);
     console.log(words);
     console.log(resps);
     ctx.ansToQ = new Map(words);

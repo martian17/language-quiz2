@@ -699,6 +699,18 @@ var ELEM = class _ELEM extends BaseELEM {
     this.attr("id", id);
   }
 };
+var CSS = {
+  css: "",
+  add: function(str) {
+    this.css += str;
+  },
+  init: function() {
+    let head = getELEM(document.head);
+    let blob = new Blob([this.css], { type: "text/css" });
+    let link = head.add(getELEM("link", { rel: "stylesheet" }));
+    link.attr("href", URL.createObjectURL(blob));
+  }
+};
 
 // src/extensions.js
 ELEM.prototype.getBus = function() {
@@ -792,18 +804,16 @@ ELEM.prototype.destroy = function() {
   }
 };
 var get = async function(path) {
-  return await (await fetch(apiUrl + path)).json();
+  return await (await fetch(apiUrl + path)).json().catch((e) => "");
 };
-
-// src/quizService.js
-var zip = function* (...args) {
-  let baseArr = [];
-  for (let i = 0; i < args[0].length; i++) {
-    for (let j = 0; j < args.length; j++) {
-      baseArr[j] = args[j][i];
-    }
-    yield baseArr;
-  }
+var post = async function(path, body) {
+  return await (await fetch(apiUrl + path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  })).json().catch((e) => "");
 };
 var newarr = function(n) {
   const arr = [];
@@ -842,6 +852,142 @@ var editDistance = function(a, b) {
   }
   return arr.at(-1);
 };
+
+// common/typeHandlers.ts
+var QuizType = {
+  WordToMeaning: 0,
+  MeaningToWord: 1
+};
+var WordRecord = class _WordRecord {
+  id;
+  name;
+  words = [];
+  //private members
+  wordIndex = /* @__PURE__ */ new Map();
+  meaningIndex = /* @__PURE__ */ new Map();
+  getByWord(word) {
+    return this.wordIndex.get(word);
+  }
+  getByMeaning(meaning) {
+    return this.meaningIndex.get(meaning);
+  }
+  static fromCompressed(record) {
+    const length = record.words.length;
+    const res = new _WordRecord();
+    res.name = record.name;
+    res.id = record.id;
+    for (let i = 0; i < length; i++) {
+      const word = {
+        word: record.words[i],
+        meaning: record.meanings[i],
+        usecases: record.usecases[i].map((k) => record.usecaseStrings[k])
+      };
+      res.words.push(word);
+      res.wordIndex.set(word.word, word);
+      res.meaningIndex.set(word.meaning, word);
+    }
+    return res;
+  }
+  compress() {
+    const usecaseIndices = /* @__PURE__ */ new Map();
+    const res = {
+      name: this.name,
+      id: this.id,
+      words: this.words.map((w) => w.word),
+      meanings: this.words.map((w) => w.meaning),
+      usecases: [],
+      usecaseStrings: []
+    };
+    for (let { usecases } of this.words) {
+      let uc = [];
+      for (let usecase of usecases) {
+        let idx;
+        if ((idx = usecaseIndices.get(usecase)) !== void 0) {
+          uc.push(idx);
+          continue;
+        }
+        idx = res.usecaseStrings.length;
+        res.usecaseStrings.push(usecase);
+        usecaseIndices.set(usecase, idx);
+        uc.push(idx);
+      }
+      res.usecases.push(uc);
+    }
+    return res;
+  }
+};
+var Quiz = class _Quiz {
+  settings;
+  type;
+  questions = [];
+  wordRecord;
+  static fromCompressed(quiz, wordRecord) {
+    const res = new _Quiz();
+    res.settings = quiz.settings;
+    res.type = quiz.type;
+    for (let i = 0; i < quiz.questions.length; i++) {
+      const question = quiz.questions[i];
+      const options = quiz.options[i];
+      res.questions.push({
+        question: wordRecord.getByWord(question),
+        options: options.map((op) => wordRecord.getByWord(op))
+      });
+    }
+    res.wordRecord = wordRecord;
+    return res;
+  }
+  compress() {
+    const res = {
+      type: this.type,
+      questions: this.questions.map((q) => q.question.word),
+      options: this.questions.map((q) => q.options.map((op) => op.word)),
+      settings: this.settings
+    };
+    return res;
+  }
+};
+var Responses = class _Responses extends Array {
+  quiz;
+  static fromCompressed(resps, wordRecord) {
+    console.log(resps, wordRecord);
+    let quiz = Quiz.fromCompressed(resps.quiz, wordRecord);
+    let res = new _Responses();
+    res.quiz = quiz;
+    for (let i = 0; i < resps.choices.length; i++) {
+      const response = {
+        question: quiz.questions[i],
+        choice: resps.choices[i],
+        choiceWord: quiz.questions[i].options[resps.choices[i]],
+        correct: true
+      };
+      if (quiz.type === QuizType.WordToMeaning) {
+        response.correct = response.question.question.meaning === response.choiceWord.meaning;
+      } else if (quiz.type === QuizType.MeaningToWord) {
+        response.correct = response.question.question.word === response.choiceWord.word;
+      }
+      res.push(response);
+    }
+    return res;
+  }
+  compress() {
+    console.log(this.quiz);
+    const res = {
+      quiz: this.quiz.compress(),
+      choices: this.map((r) => r.choice)
+    };
+    return res;
+  }
+};
+
+// src/quizService.ts
+var noisySort = function(cb, noiseLevel) {
+  return function(a, b) {
+    if (a === b || Math.random() < noiseLevel) {
+      return Math.random() - 0.5;
+    }
+    return cb(a, b);
+  };
+};
 var similarityScore = function(a, b) {
   const ed = editDistance(a, b) + 1;
   let modifier = 1;
@@ -851,44 +997,10 @@ var similarityScore = function(a, b) {
     modifier *= 2;
   return (a.length + b.length) / ed * modifier;
 };
-var zipResponses = function(words, resps) {
-  let history = {};
-  for (let [word] of words) {
-    history[word] = [];
-  }
-  for (let { words: words2, responses } of resps) {
-    for (let [word, resp] of zip(words2, responses)) {
-      history[word].push(resp);
-    }
-  }
-  return Object.entries(history);
-};
-var getPositiveStreaks = function(verlauf) {
-  let streak = 0;
-  for (let i = verlauf.length - 1; i >= 0; i--) {
-    let val = verlauf[i];
-    if (val === 0)
-      break;
-    if (val === 1)
-      streak++;
-  }
-  return streak;
-};
-var getNegativeStreaks = function(verlauf) {
-  let streak = 0;
-  for (let i = verlauf.length - 1; i >= 0; i--) {
-    let val = verlauf[i];
-    if (val === 0)
-      break;
-    if (val === 1)
-      streak++;
-  }
-  return streak;
-};
-var verlaufToPriority = {
-  repeat: function(word, verlauf) {
-    const positiveStreaks = getPositiveStreaks(verlauf);
-    const negativeStreaks = getNegativeStreaks(verlauf);
+var wordHistoryToPriority = {
+  repeat(wordHistory) {
+    const positiveStreaks = wordHistory.getPositiveStreaks();
+    const negativeStreaks = wordHistory.getNegativeStreaks();
     let val = 0;
     if (negativeStreaks) {
       return negativeStreaks + 20;
@@ -898,38 +1010,66 @@ var verlaufToPriority = {
     }
     return -1;
   },
-  sweep(word, verlauf) {
-    const positiveStreaks = getPositiveStreaks(verlauf);
-    const negativeStreaks = getNegativeStreaks(verlauf);
-    let val = 0;
+  sweep(wordHistory) {
+    const positiveStreaks = wordHistory.getPositiveStreaks();
+    const negativeStreaks = wordHistory.getNegativeStreaks();
     if (negativeStreaks) {
       return negativeStreaks + 20;
     }
-    if (positiveSteaks < 3) {
+    if (positiveStreaks < 3) {
       return 3 - positiveStreaks;
     }
     return -1;
   },
-  random(word, verlauf) {
-    const positiveStreaks = getPositiveStreaks(verlauf);
+  random(wordHistory) {
+    const positiveStreaks = wordHistory.getPositiveStreaks();
     if (positiveStreaks < 3) {
       return 1;
     }
     return -1;
   }
 };
-var noisySort = function(cb, noiseLevel) {
-  return function(a, b) {
-    if (a === b || Math.random() < noiseLevel) {
-      return Math.random() - 0.5;
+var WordHistory = class extends Array {
+  getPositiveStreaks() {
+    let streak = 0;
+    for (let i = this.length - 1; i >= 0; i--) {
+      let val = this[i];
+      if (val === false)
+        break;
+      if (val === true)
+        streak++;
     }
-    return cb(a, b);
-  };
+    return streak;
+  }
+  getNegativeStreaks() {
+    let streak = 0;
+    for (let i = this.length - 1; i >= 0; i--) {
+      let val = this[i];
+      if (val === true)
+        break;
+      if (val === false)
+        streak++;
+    }
+    return streak;
+  }
 };
-var createOptions = function(word, words) {
-  console.log(words);
+var tallyResponses = function(resps, wordRecord, quizType) {
+  let res = new Map(wordRecord.words.map((w) => [w.word, new WordHistory()]));
+  for (let resp of resps) {
+    if (quizType !== void 0) {
+      if (resp.quiz.type !== quizType)
+        continue;
+    }
+    for (let r of resp) {
+      const word = r.choiceWord.word;
+      res.get(word).push(r.correct);
+    }
+  }
+  return res;
+};
+var createOptions = function(word, words, optionSize) {
   let a1 = [];
-  for (let [w1] of words) {
+  for (let w1 of words) {
     if (w1 === word)
       continue;
     const s = similarityScore(word, w1);
@@ -939,39 +1079,157 @@ var createOptions = function(word, words) {
   a1 = a1.sort(noisySort((a, b) => {
     return b[1] - a[1];
   }, randomness)).map((v) => v[0]);
-  let options = a1.slice(0, 3);
+  let options = a1.slice(0, optionSize - 1);
   options.push(word);
   options = options.sort(() => Math.random() > 0.5).map((w) => w);
   return options;
 };
 var createQuiz = async function(qid, ctx2) {
-  const words = (await get(`/quiz/${qid}`)).data;
-  const resps = await get(`/quiz/${qid}/responses`);
-  console.log(words);
-  console.log(resps);
-  ctx2.ansToQ = new Map(words);
-  ctx2.qToAns = new Map(words.map(([a, b]) => [b, a]));
-  const verlaufs = zipResponses(words, resps);
-  const chosen = verlaufs.sort(([w1, v1], [w2, v2]) => {
-    const p1 = verlaufToPriority[ctx2.quizMode](w1, v1);
-    const p2 = verlaufToPriority[ctx2.quizMode](w2, v2);
-    if (p1 === p2)
-      return Math.random() - 0.5;
+  const wordRecord = WordRecord.fromCompressed((await get(`/quiz/${qid}`)).data);
+  const rawWords = wordRecord.words.map((w) => w.word);
+  console.log(await get(`/quiz/${qid}/responses`));
+  const resps = (await get(`/quiz/${qid}/responses`)).map((compressed) => Responses.fromCompressed(compressed, wordRecord));
+  const questions = [];
+  const wordHistoryMap = tallyResponses(resps, wordRecord, ctx2.quizType);
+  const quizWords = wordRecord.words.map((w) => w.word).sort(noisySort((w1, w2) => {
+    const p1 = wordHistoryToPriority[ctx2.quizMode](wordHistoryMap.get(w1));
+    const p2 = wordHistoryToPriority[ctx2.quizMode](wordHistoryMap.get(w2));
     return p2 - p1;
-  }).map(([w, v]) => w).slice(0, ctx2.quizLength);
-  const answerMap = new Map(words);
-  return chosen.map((w) => {
-    return {
-      question: w,
-      options: createOptions(w, words)
-    };
-  });
+  }, 0.5)).slice(0, ctx2.quizLength);
+  const quiz = new Quiz();
+  quiz.settings = {
+    quizMode: ctx2.quizMode
+  };
+  quiz.type = ctx2.quizType;
+  quiz.questions = quizWords.map((w) => ({
+    question: wordRecord.getByWord(w),
+    options: createOptions(w, rawWords, ctx2.optionSize).map((w2) => wordRecord.getByWord(w2))
+  }));
+  return quiz;
 };
 
 // src/main.js
+CSS.add(`
+body{
+    background-color: #fff;
+}
+`);
 console.log(await get("/quizList"));
 var ctx = {
+  quizType: QuizType.WordToMeaning,
   quizMode: "repeat",
-  quizLength: 10
+  quizLength: 2,
+  optionSize: 9
 };
 console.log(await createQuiz("9cac9db4-231d-4db4-89bb-07739c395f20", ctx));
+var topPage = async function(body) {
+  body.destroy();
+  body.add("H1", 0, "Choose the quiz");
+  const listWrapper = body.add("div");
+  for (let { name, id } of await get("/quizList")) {
+    const item = listWrapper.add("div", 0, name, {
+      border: "solid 1px #000",
+      padding: "10px",
+      margin: "20px"
+    });
+    item.on("click", () => {
+      ctx.qid = id;
+      quizPage(body);
+    });
+  }
+};
+var quizPage = async function(body) {
+  body.destroy();
+  const wrapper = body.add("div", 0, 0, {
+    border: "solid 1px #000",
+    display: "flex",
+    flexDirection: "column",
+    padding: "20px",
+    gap: "20px"
+  });
+  const qid = ctx.qid;
+  const responses = new Responses();
+  const quiz = await createQuiz(qid, ctx);
+  responses.quiz = quiz;
+  const length = quiz.questions.length;
+  for (let i = 0; i < length; i++) {
+    const question = quiz.questions[i];
+    const header = wrapper.add("div", 0, question.question.word, {
+      border: "solid 1px #000",
+      textAlign: "center",
+      fontSize: "100px",
+      padding: "10px",
+      position: "relative"
+    });
+    header.add("div", 0, `${i + 1}/${length}`, {
+      position: "absolute",
+      top: "10px",
+      fontSize: "30px",
+      left: "10px"
+    });
+    const optionWrapper = wrapper.add("div", 0, 0, {
+      border: "solid 1px #000",
+      padding: "10px",
+      gap: "10px",
+      display: "flex",
+      flexDirection: "row",
+      flexWrap: "wrap"
+    });
+    let optionElems = [];
+    for (const option of question.options) {
+      const optionElem = optionWrapper.add("div", 0, option.meaning, {
+        border: "solid 1px #000",
+        flex: "1 0 30%",
+        padding: "10px",
+        boxSizing: "border-box",
+        fontSize: "30px",
+        textAlign: "center"
+      });
+      optionElem.option = option;
+      optionElems.push(optionElem);
+    }
+    console.log(question, question.options, optionElems);
+    const idx = await Promise.race(optionElems.map(async (op, i2) => {
+      await op.once("click");
+      console.log("clicked");
+      return i2;
+    }));
+    console.log("index", idx);
+    const chosen = optionElems[idx].option;
+    const correct = chosen.meaning === question.question.meaning;
+    for (let i2 = 0; i2 < optionElems.length; i2++) {
+      const optionElem = optionElems[i2];
+      optionElem.setInner(`${optionElem.option.word}:${optionElem.option.meaning}`);
+      if (i2 === idx) {
+        if (correct) {
+          optionElem.style({ border: "solid 1px #0f0" });
+        } else {
+          optionElem.style({ border: "solid 1px #f00" });
+        }
+      } else if (optionElem.option.meaning === question.question.meaning) {
+        optionElem.style({ border: "solid 1px #ff0" });
+      }
+    }
+    responses.push({
+      question,
+      choice: idx,
+      choiceWord: chosen,
+      correct
+    });
+    const nextButton = wrapper.add("div", 0, "next", {
+      border: "solid 1px #000",
+      textAlign: "center",
+      fontSize: "30px",
+      padding: "10px"
+    });
+    await nextButton.once("click");
+    wrapper.destroy();
+  }
+  const res = responses.compress();
+  console.log(res);
+  console.log(qid, res);
+  await post(`/quiz/${qid}/responses`, res);
+  topPage(body);
+};
+topPage(ELEM.fromElement(document.body));
+CSS.init();

@@ -1,19 +1,143 @@
 import {ELEM, CSS} from "htmlgen";
 import {} from "./extensions.js";
 import {get, post} from "./util.js";
-import {createQuiz} from "./quizService.js";
+import {createQuiz} from "./quizService";
+import {QuizType, Responses} from "../common/typeHandlers";
 
-
+CSS.add(`
+body{
+    background-color: #fff;
+}
+`);
 
 //testing the api
 
 console.log(await get("/quizList"));
 let ctx = {
+    quizType: QuizType.WordToMeaning,
     quizMode: "repeat",
-    quizLength: 10,
+    quizLength: 2,
+    optionSize: 9,
 }
 console.log(await createQuiz("9cac9db4-231d-4db4-89bb-07739c395f20",ctx));
 
+const topPage = async function(body){
+    body.destroy();
+    body.add("H1",0,"Choose the quiz");
+    const listWrapper = body.add("div");
+    for(let {name,id} of await get("/quizList")){
+        const item = listWrapper.add("div",0,name,{
+            border: "solid 1px #000",
+            padding: "10px",
+            margin: "20px",
+        });
+        item.on("click",()=>{
+            ctx.qid = id;
+            quizPage(body);
+        });
+    }
+}
+
+const quizPage = async function(body){
+    body.destroy();
+    const wrapper = body.add("div",0,0,{
+        border: "solid 1px #000",
+        display: "flex",
+        flexDirection: "column",
+        padding: "20px",
+        gap: "20px",
+    });
+    const qid = ctx.qid;
+    const responses = new Responses;
+    const quiz = await createQuiz(qid,ctx);
+    responses.quiz= quiz;
+
+    const length = quiz.questions.length;
+    for(let i = 0; i < length; i++){
+        const question = quiz.questions[i];
+        const header = wrapper.add("div",0,question.question.word,{
+            border: "solid 1px #000",
+            textAlign: "center",
+            fontSize: "100px",
+            padding: "10px",
+            position: "relative",
+        });
+        header.add("div",0,`${i+1}/${length}`,{
+            position: "absolute",
+            top: "10px",
+            fontSize: "30px",
+            left: "10px",
+        });
+
+        const optionWrapper = wrapper.add("div",0,0,{
+            border: "solid 1px #000",
+            padding: "10px",
+            gap: "10px",
+            display: "flex",
+            flexDirection: "row",
+            flexWrap: "wrap",
+        });
+        let optionElems = [];
+        for(const option of question.options){
+            const optionElem = optionWrapper.add("div",0,option.meaning,{
+                border: "solid 1px #000",
+                flex: "1 0 30%",
+                padding: "10px",
+                boxSizing: "border-box",
+                fontSize: "30px",
+                textAlign: "center",
+            });
+            optionElem.option = option;
+            optionElems.push(optionElem);
+        }
+        console.log(question,question.options,optionElems);
+        const idx = await Promise.race(optionElems.map(async (op,i)=>{
+            await op.once("click");
+            console.log("clicked");
+            return i;
+        }));
+        console.log("index",idx);
+        const chosen = optionElems[idx].option;
+        const correct = chosen.meaning === question.question.meaning;
+        for(let i = 0; i < optionElems.length; i++){
+            const optionElem = optionElems[i];
+            optionElem.setInner(`${optionElem.option.word}:${optionElem.option.meaning}`);
+            if(i === idx){
+                if(correct){
+                    optionElem.style({border:"solid 1px #0f0"});
+                }else{
+                    optionElem.style({border:"solid 1px #f00"});
+                }
+            }else if(optionElem.option.meaning === question.question.meaning){
+                    optionElem.style({border:"solid 1px #ff0"});
+            }
+        }
+        responses.push({
+            question,
+            choice: idx,
+            choiceWord: chosen,
+            correct,
+        });
+        const nextButton = wrapper.add("div",0,"next",{
+            border: "solid 1px #000",
+            textAlign: "center",
+            fontSize: "30px",
+            padding: "10px",
+        });
+        await nextButton.once("click");
+        wrapper.destroy();
+    }
+    //finally send the response to the server
+    const res = responses.compress();
+    console.log(res);
+    console.log(qid,res);
+    await post(`/quiz/${qid}/responses`,res);
+    topPage(body);
+}
+
+topPage(ELEM.fromElement(document.body))
+
+CSS.init();
 
 
 

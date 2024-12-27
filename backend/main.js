@@ -3,15 +3,36 @@ const express = M_express.default;
 import {promises as fs} from "fs";
 const app = express();
 
-console.log(await fs.readFile("./data/responses.json"));
+app.use(express.json());
+
+const readJsonFile = async function(path,def){
+    let val;
+    try{
+        return JSON.parse(val=(await fs.readFile(path)+""));
+    }catch(err){
+        if(!def)throw err;
+        let defstr = JSON.stringify(def);
+        let result = JSON.parse(defstr);
+        if(val !== "" && val !== undefined){
+            const patharr = path.split("/");
+            await fs.rename(path,patharr.slice(0,-1).join("/")+`/broken-${patharr.at(-1)}-${crypto.randomUUID()}`);
+        }
+        await fs.writeFile(path,defstr);
+        return result;
+    }
+}
+
 const respRecord = {
-    data: JSON.parse(await fs.readFile("./data/responses.json")),// type array
+    data: await readJsonFile("./backend/data/responses.json",[]),// type array
     async save(){
-        await fs.writeFile("./data/responses.json",this.data);
+        await fs.writeFile("./backend/data/responses.json",JSON.stringify(this.data));
     },
-    store(uid,qid,result){
-        const ts = Date.now()
-        
+    async put(uid,qid,result){
+        const ts = Date.now();
+        this.data.push({
+            uid,qid,result,ts
+        })
+        this.save();
     },
     get(uid,qid){
         return this.data.filter(d => 
@@ -19,15 +40,12 @@ const respRecord = {
             d.qid === qid
         );
     },
-    put(uid,qid,response){// response is a list of []
-        data.push({uid,qid,time:Date.now(),response});
-    },
 };
 
 const completionStateRecord = {
-    data: JSON.parse(await fs.readFile("./data/completionStates.json")),// type object
+    data: await readJsonFile("./backend/data/completionStates.json",{}),// type object
     async save(){
-        await fs.writeFile("./data/completionStates.json",this.data);
+        await fs.writeFile("./backend/data/completionStates.json",JSON.stringify(this.data));
     },
     store(uid,qid,result){
         const entry = this.data[uid+qid];
@@ -43,11 +61,42 @@ const completionStateRecord = {
     },
 };
 
+const compressWordRecord = function(words0){
+    const words = [];
+    const meanings = [];
+    const usecases = [];
+    const usecaseStrings = [];
+    const usecaseMap = new Map;
+    for(let [word,meaning,{context: localUsecases}] of words0){
+        words.push(word);
+        meanings.push(meaning);
+        let ucs = [];
+        for(let uc of localUsecases){
+            let ucid = usecaseMap.get(uc);
+            if(ucid !== undefined){
+                ucs.push(ucid);
+                continue;
+            }
+            ucid = usecaseStrings.length;
+            ucs.push(ucid);
+            usecaseMap.set(uc,ucid);
+            usecaseStrings.push(uc);
+        }
+        usecases.push(ucs);
+    }
+    return {
+        words,
+        meanings,
+        usecases,
+        usecaseStrings
+    };
+};
+
 const defaultQuizList = [
     {
         name: "Essen in Dungeon",
         id: "9cac9db4-231d-4db4-89bb-07739c395f20",
-        data: JSON.parse(await fs.readFile("./data/dungeon.json")),
+        data: compressWordRecord(await readJsonFile("./backend/data/dungeon.json")),
     },
 ];
 
@@ -94,11 +143,11 @@ type QuizResult = {
 */
 
 app.post("/api/quiz/:qid/responses",(req,res)=>{
-    const qid = req.param.qid;
-    const {result} = req.body;
+    const qid = req.params.qid;
+    const result = req.body;
     // result: list[q,resp]
     const uid = defaultUid;
-    respRecord.store(uid,qid,result);
+    respRecord.put(uid,qid,result);
     res.send(200);
 });
 
